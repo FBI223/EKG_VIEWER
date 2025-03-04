@@ -1,4 +1,7 @@
 import sys
+import re
+import copy
+import os
 import numpy as np
 import wfdb
 from PyQt5 import QtWidgets, QtCore
@@ -7,9 +10,13 @@ from PyQt5.QtWidgets import (
     QLabel, QScrollBar, QHBoxLayout, QMessageBox, QComboBox,
     QSlider, QDialog, QFormLayout, QDialogButtonBox, QInputDialog, QMenu, QLineEdit
 )
-
+from PyQt5.QtCore import pyqtSlot
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
+from matplotlib.backend_bases import MouseEvent
+
+def sanitize_record_name(name: str) -> str:
+    return re.sub(r'\W+', '_', name)
 
 class AnnotationDialog(QDialog):
     def __init__(self, sample, fs, symbol, idx, parent=None):
@@ -33,7 +40,8 @@ class AnnotationDialog(QDialog):
         layout.addRow(self.btn_box)
         self.deleted = False
 
-    def delete_annotation(self):
+    @pyqtSlot()
+    def delete_annotation(self) -> None:
         self.deleted = True
         self.accept()
 
@@ -44,7 +52,8 @@ class AnnotationDialog(QDialog):
             "deleted": self.deleted
         }
 
-    def accept(self):
+    @pyqtSlot()
+    def accept(self) -> None:
         try:
             new_time = float(self.time_edit.text())
             new_sample = int(new_time * self.fs)
@@ -78,12 +87,13 @@ class ECGEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("ECG Editor")
         self.record = None
-        self.annotations = None
+        self.annotations = None  # Kopia pliku ATR – tu będą zmiany
+        self.atr_original_path = ""  # Ścieżka oryginalnego pliku ATR
         self.dat_file = ""
-        self.atr_file = ""
+        self.atr_file = ""  # Ścieżka, na której pracujemy
         self.window_size_s = 5
         self.current_start = 0
-        self.annot_artists = []  # List of tuples (artist, annotation index)
+        self.annot_artists = []
         self.drag_annotation = None
         self.drag_offset = 0
         self.drag_index = None
@@ -93,21 +103,19 @@ class ECGEditor(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-
-        self.canvas = FigureCanvas(plt.Figure(figsize=(10,5)))
+        self.canvas = FigureCanvas(plt.Figure(figsize=(10, 5)))
         layout.addWidget(self.canvas)
-        self.ax1, self.ax2 = self.canvas.figure.subplots(2,1, sharex=True,
-                                                         gridspec_kw={'height_ratios':[4, 1]})
+        self.ax1, self.ax2 = self.canvas.figure.subplots(
+            2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1]}
+        )
         self.ax1.set_xlabel("Czas (s)")
         self.ax2.set_xlabel("Czas (s)")
         self.ax1.grid(True)
         self.ax2.grid(True)
         self.ax2.get_yaxis().set_visible(False)
-
         self.canvas.mpl_connect('button_press_event', self.on_press)
         self.canvas.mpl_connect('motion_notify_event', self.on_motion)
         self.canvas.mpl_connect('button_release_event', self.on_release)
-
         file_btn_layout = QHBoxLayout()
         self.btn_load_dat = QPushButton("Wczytaj .dat")
         self.btn_load_dat.clicked.connect(self.load_dat)
@@ -122,7 +130,6 @@ class ECGEditor(QMainWindow):
         self.btn_save_atr.clicked.connect(self.save_atr)
         file_btn_layout.addWidget(self.btn_save_atr)
         layout.addLayout(file_btn_layout)
-
         lead_layout = QHBoxLayout()
         self.label_lead = QLabel("Lead:")
         lead_layout.addWidget(self.label_lead)
@@ -130,7 +137,6 @@ class ECGEditor(QMainWindow):
         self.combo_leads.currentIndexChanged.connect(self.update_plot)
         lead_layout.addWidget(self.combo_leads)
         layout.addLayout(lead_layout)
-
         time_layout = QHBoxLayout()
         self.label_time = QLabel("Czas okna (s):")
         time_layout.addWidget(self.label_time)
@@ -140,7 +146,6 @@ class ECGEditor(QMainWindow):
         self.slider_time_window.valueChanged.connect(self.update_window_size)
         time_layout.addWidget(self.slider_time_window)
         layout.addLayout(time_layout)
-
         scroll_layout = QHBoxLayout()
         self.label_scroll = QLabel("Przewijanie:")
         scroll_layout.addWidget(self.label_scroll)
@@ -149,7 +154,8 @@ class ECGEditor(QMainWindow):
         scroll_layout.addWidget(self.scroll_bar)
         layout.addLayout(scroll_layout)
 
-    def load_dat(self):
+    @pyqtSlot()
+    def load_dat(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(self, "Wczytaj .dat", "", "Pliki DAT (*.dat)")
         if file_path:
             self.dat_file = file_path[:-4]
@@ -161,28 +167,36 @@ class ECGEditor(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
 
-    def save_dat(self):
+    @pyqtSlot()
+    def save_dat(self) -> None:
         if self.record is None:
             QMessageBox.warning(self, "Błąd", "Brak załadowanego pliku DAT.")
             return
         file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz .dat", "", "Pliki DAT (*.dat)")
         if file_path:
-            out_name = file_path.rsplit('.', 1)[0]
+            out_name = sanitize_record_name(file_path.rsplit('.', 1)[0])
             fmt = self.record.fmt if hasattr(self.record, 'fmt') else '16'
             try:
-                wfdb.wrrecord(out_name, p_signal=self.record.p_signal, fs=self.record.fs,
-                              sig_name=self.record.sig_name, fmt=fmt)
+                fmt_list = [fmt] * self.record.n_sig if hasattr(self.record, 'n_sig') else fmt
+                wfdb.wrsamp(record_name=out_name, fs=self.record.fs,
+                            p_signal=self.record.p_signal,
+                            sig_name=self.record.sig_name,
+                            fmt=fmt_list)
                 QMessageBox.information(self, "Sukces", "Plik DAT zapisany.")
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
 
-    def load_atr(self):
+    @pyqtSlot()
+    def load_atr(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(self, "Wczytaj .atr/.ii", "", "Pliki ATR (*.atr *.ii)")
         if file_path:
-            self.atr_file = file_path
+            self.atr_original_path = file_path  # Zapamiętujemy oryginalną ścieżkę
+            self.atr_file = file_path  # Pracujemy na tym pliku (w kopii)
             ext = file_path.split('.')[-1]
             try:
-                self.annotations = wfdb.rdann(self.dat_file, ext)
+                # Tworzymy głęboką kopię adnotacji z oryginalnego pliku
+                original_ann = wfdb.rdann(self.dat_file, ext)
+                self.annotations = copy.deepcopy(original_ann)
                 if not hasattr(self.annotations, 'aux') or self.annotations.aux is None:
                     self.annotations.aux = np.array([''] * len(self.annotations.sample))
                 if not hasattr(self.annotations, 'symbol') or self.annotations.symbol is None:
@@ -191,22 +205,54 @@ class ECGEditor(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
 
-    def save_atr(self):
+    def auto_save_atr(self) -> None:
+        if self.atr_file and self.annotations is not None and self.record is not None:
+            out_dir = os.path.dirname(self.atr_file)
+            base = os.path.basename(self.atr_file)
+            base = os.path.splitext(base)[0]
+            sanitized_base = sanitize_record_name(base)
+            ext = os.path.splitext(self.atr_file)[1].lstrip('.') or 'atr'
+            current_dir = os.getcwd()
+            # Sortowanie adnotacji – uporządkuj próbki oraz odpowiadające im symbole
+            sort_idx = np.argsort(self.annotations.sample)
+            sorted_samples = self.annotations.sample[sort_idx]
+            sorted_symbols = np.array(self.annotations.symbol)[sort_idx]
+            try:
+                os.chdir(out_dir)
+                wfdb.wrann(sanitized_base, ext, sorted_samples, sorted_symbols, fs=self.record.fs)
+            except Exception as e:
+                print("Auto-save ATR error:", e)
+            finally:
+                os.chdir(current_dir)
+
+    @pyqtSlot()
+    def save_atr(self) -> None:
         if self.annotations is None:
             QMessageBox.warning(self, "Błąd", "Brak załadowanego pliku ATR.")
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz .atr/.ii", "", "Pliki ATR (*.atr *.ii)")
+        default_dir = os.path.dirname(self.atr_original_path) if self.atr_original_path else ""
+        file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz .atr/.ii", default_dir, "Pliki ATR (*.atr *.ii)")
         if file_path:
-            out_name = file_path.rsplit('.', 1)[0]
-            ext = self.atr_file.split('.')[-1] if self.atr_file else 'atr'
+            out_dir = os.path.dirname(file_path)
+            base = os.path.basename(file_path)
+            base = os.path.splitext(base)[0]
+            sanitized_base = sanitize_record_name(base)
+            ext = os.path.splitext(file_path)[1].lstrip('.') or 'atr'
+            current_dir = os.getcwd()
+            sort_idx = np.argsort(self.annotations.sample)
+            sorted_samples = self.annotations.sample[sort_idx]
+            sorted_symbols = np.array(self.annotations.symbol)[sort_idx]
             try:
-                wfdb.wrann(out_name, ext, self.annotations.sample, self.annotations.symbol,
-                           aux=self.annotations.aux, fs=self.record.fs)
+                os.chdir(out_dir)
+                wfdb.wrann(sanitized_base, ext, sorted_samples, sorted_symbols, fs=self.record.fs)
                 QMessageBox.information(self, "Sukces", "Plik ATR zapisany.")
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
+            finally:
+                os.chdir(current_dir)
 
-    def populate_leads(self):
+
+    def populate_leads(self) -> None:
         self.combo_leads.clear()
         if self.record is not None:
             if hasattr(self.record, 'sig_name') and self.record.sig_name:
@@ -216,23 +262,26 @@ class ECGEditor(QMainWindow):
                 for i in range(self.record.n_sig):
                     self.combo_leads.addItem(f"Lead {i+1}")
 
-    def setup_scroll(self):
+    def setup_scroll(self) -> None:
         if self.record is None:
             return
         total = self.record.p_signal.shape[0]
         max_val = max(0, total - int(self.window_size_s * self.record.fs))
         self.scroll_bar.setRange(0, max_val)
 
-    def scroll_changed(self):
+    @pyqtSlot()
+    def scroll_changed(self) -> None:
         self.current_start = self.scroll_bar.value()
         self.update_plot()
 
-    def update_window_size(self):
+    @pyqtSlot()
+    def update_window_size(self) -> None:
         self.window_size_s = self.slider_time_window.value()
         self.setup_scroll()
         self.update_plot()
 
-    def update_plot(self):
+    @pyqtSlot()
+    def update_plot(self) -> None:
         self.ax1.clear()
         self.ax2.clear()
         self.annot_artists = []
@@ -258,7 +307,6 @@ class ECGEditor(QMainWindow):
             self.ax1.plot(ann_times, sig[ann_samples - start], 'r^')
             for i, (at, sym) in enumerate(zip(ann_times, ann_syms)):
                 art = self.ax2.text(at, 0, sym, ha='center', va='center', fontsize=10, picker=True)
-                # Store tuple: (artist, global annotation index)
                 global_idx = np.where(self.annotations.sample == ann_samples[i])[0][0]
                 self.annot_artists.append((art, global_idx))
         self.ax2.set_xlim(self.ax1.get_xlim())
@@ -267,9 +315,9 @@ class ECGEditor(QMainWindow):
         self.ax2.get_yaxis().set_visible(False)
         self.canvas.draw()
 
-    def on_press(self, event):
+    @pyqtSlot(object)
+    def on_press(self, event: MouseEvent) -> None:
         if event.inaxes == self.ax2 and event.button == 1:
-            # Check for double click to open edit dialog
             for artist, idx in self.annot_artists:
                 contains, _ = artist.contains(event)
                 if contains:
@@ -284,14 +332,16 @@ class ECGEditor(QMainWindow):
         if event.inaxes == self.ax1 and event.button == 3:
             self.show_context_menu(event)
 
-    def on_motion(self, event):
+    @pyqtSlot(object)
+    def on_motion(self, event: MouseEvent) -> None:
         if self.drag_annotation is not None and event.inaxes == self.ax2:
             new_x = event.xdata - self.drag_offset
             pos = self.drag_annotation.get_position()
             self.drag_annotation.set_position((new_x, pos[1]))
             self.canvas.draw_idle()
 
-    def on_release(self, event):
+    @pyqtSlot(object)
+    def on_release(self, event: MouseEvent) -> None:
         if self.drag_annotation is not None and event.inaxes == self.ax2:
             fs = self.record.fs
             new_time = self.drag_annotation.get_position()[0]
@@ -301,12 +351,16 @@ class ECGEditor(QMainWindow):
             self.drag_annotation = None
             self.drag_index = None
             self.update_plot()
+            self.auto_save_atr()  # Aktualizuj stan pliku ATR na dysku po zmianie
 
-    def show_context_menu(self, event):
+    @pyqtSlot(object)
+    def show_context_menu(self, event: MouseEvent) -> None:
         menu = QMenu(self)
         act_edit = menu.addAction("Edytuj próbkę")
         act_add = menu.addAction("Dodaj adnotację")
-        action = menu.exec_(self.mapToGlobal(QtCore.QPoint(int(event.guiEvent.x()), int(event.guiEvent.y()))))
+        action = menu.exec_(self.mapToGlobal(
+            QtCore.QPoint(int(event.guiEvent.x()), int(event.guiEvent.y()))
+        ))
         fs = self.record.fs
         sample_idx = int(round(event.xdata * fs))
         lead = self.combo_leads.currentIndex() if self.combo_leads.currentIndex() >= 0 else 0
@@ -319,11 +373,8 @@ class ECGEditor(QMainWindow):
                     self.record.p_signal[new_idx, lead] = new_val
                     self.update_plot()
         elif action == act_add:
-            sym, ok = QInputDialog.getText(self, "Dodaj adnotację", "Symbol adnotacji:",
-                                           text="A")
+            sym, ok = QInputDialog.getText(self, "Dodaj adnotację", "Symbol adnotacji:", text="A")
             if ok and sym:
-                # Optionally, allow manual input of sample index via another dialog
-                # Here sample is taken from the click location
                 if self.annotations is None:
                     self.annotations = wfdb.Annotation(
                         sample=np.array([sample_idx]),
@@ -337,10 +388,12 @@ class ECGEditor(QMainWindow):
                     if hasattr(self.annotations, 'aux') and self.annotations.aux is not None:
                         self.annotations.aux = np.append(self.annotations.aux, sym)
                     else:
-                        self.annotations.aux = np.array([sym]*len(self.annotations.sample))
+                        self.annotations.aux = np.array([sym] * len(self.annotations.sample))
                 self.update_plot()
+                self.auto_save_atr()  # Zapisz zmiany od razu
 
-    def edit_annotation(self, global_idx):
+    @pyqtSlot(int)
+    def edit_annotation(self, global_idx: int) -> None:
         if self.annotations is None:
             return
         symbol = self.annotations.symbol[global_idx]
@@ -360,6 +413,7 @@ class ECGEditor(QMainWindow):
                 if hasattr(self.annotations, 'aux') and len(self.annotations.aux) > global_idx:
                     self.annotations.aux[global_idx] = data["symbol"]
             self.update_plot()
+            self.auto_save_atr()  # Zapisz zmiany
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
