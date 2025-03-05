@@ -1,19 +1,42 @@
 import sys
 import copy
 import os
+import re
 import numpy as np
 import wfdb
 from PyQt6 import QtWidgets, QtCore
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog, QVBoxLayout, QWidget,
     QLabel, QScrollBar, QHBoxLayout, QMessageBox, QComboBox,
-    QSlider, QDialog, QFormLayout, QDialogButtonBox, QInputDialog, QMenu, QLineEdit
+    QSlider, QDialog, QFormLayout, QDialogButtonBox, QInputDialog, QLineEdit
 )
 from PyQt6.QtCore import pyqtSlot
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
-import re
+from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+
+
+
+class DataInfoDialog(QDialog):
+    def __init__(self, parent, data, title, headers):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setRowCount(len(data))
+
+        for row_idx, row_data in enumerate(data):
+            for col_idx, value in enumerate(row_data):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value)))
+
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        layout.addWidget(self.table)
+
 
 def sanitize_record_name(name: str) -> str:
     return re.sub(r'\W+', '_', name)
@@ -174,6 +197,70 @@ class ECGEditor(QMainWindow):
         layout.addLayout(scroll_layout)
 
 
+        self.btn_show_info = QPushButton("Show Signal Info")
+        self.btn_show_info.clicked.connect(self.show_signal_info)
+        self.btn_show_info.setEnabled(False)  # Domyślnie zablokowane
+        layout.addWidget(self.btn_show_info)
+
+
+    def show_signal_info(self):
+        """ Wyświetla tabelę z danymi sygnału oraz adnotacjami z możliwością wyszukiwania próbki """
+        if self.record is None or self.annotations is None:
+            QMessageBox.warning(self, "Błąd", "Najpierw wczytaj pliki .dat i .atr!")
+            return
+
+        fs = self.record.fs  # Częstotliwość próbkowania
+        total_samples = len(self.record.p_signal)  # Liczba próbek
+
+        # Pobranie adnotacji (jeśli brak, zostaną puste wartości)
+        annotation_dict = {int(s): sym for s, sym in zip(self.annotations.sample, self.annotations.symbol)}
+
+        # 🔹 **Lista próbek: co 100 + wszystkie z adnotacjami**
+        sample_indices = sorted(set(range(0, total_samples, 100)) | set(annotation_dict.keys()))
+
+        # Przygotowanie danych do tabeli (próbka, czas, wartość, adnotacja)
+        self.signal_data = [
+            (sample, (sample / fs) * 1000, self.record.p_signal[sample, 0], annotation_dict.get(sample, ""))
+            for sample in sample_indices
+        ]
+
+        # Tworzenie okna tabeli
+        self.dialog = QDialog(self)
+        self.dialog.setWindowTitle("Informacje o sygnale")
+        self.dialog.resize(1000, 700)  # **Większe okno**
+        layout = QVBoxLayout(self.dialog)
+
+        # Tworzenie tabeli
+        self.table = QtWidgets.QTableWidget(len(self.signal_data), 4)
+        self.table.setHorizontalHeaderLabels(["Próbka", "Czas (ms)", "Wartość", "Adnotacja"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSortingEnabled(False)  # **Wyłączenie sortowania przy wypełnianiu**
+
+        # Wypełnianie tabeli
+        for row_idx, (sample_id, time_ms, value, annotation) in enumerate(self.signal_data):
+            item_sample = QtWidgets.QTableWidgetItem(str(sample_id))
+            item_sample.setData(QtCore.Qt.ItemDataRole.UserRole, sample_id)  # **Dane liczbowe do sortowania**
+            self.table.setItem(row_idx, 0, item_sample)
+
+            self.table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(f"{time_ms:.2f}"))
+            self.table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(f"{value:.3f}"))
+            self.table.setItem(row_idx, 3, QtWidgets.QTableWidgetItem(annotation))
+
+        self.table.setSortingEnabled(True)
+        self.table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)  # **Sortowanie rosnące od razu**
+
+        layout.addWidget(self.table)
+
+        # Przycisk zamknięcia
+        btn_close = QPushButton("Zamknij")
+        btn_close.clicked.connect(self.dialog.accept)
+        layout.addWidget(btn_close)
+
+        self.dialog.setLayout(layout)
+        self.dialog.exec()
+
+
+
 
 
     def keyPressEvent(self, event):
@@ -232,6 +319,7 @@ class ECGEditor(QMainWindow):
                 self.update_plot()
 
                 self.btn_save_atr.setEnabled(True)
+                self.btn_show_info.setEnabled(True)
 
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
@@ -398,7 +486,7 @@ class ECGEditor(QMainWindow):
                 sym = sym.strip()
 
                 # 🔹 WALIDACJA: Dopuszczone znaki (litery, cyfry, matematyczne, znaki specjalne)
-                allowed_pattern = re.compile(r"^[a-zA-Z0-9\(\)\[\]\{\}\+\-\*/=<>!@#\$%^&_|~]$")
+                allowed_pattern = re.compile(r"^[a-zA-Z0-9()\[\]{}+\-*/=!@%^&|~]$")
 
                 if not allowed_pattern.match(sym):
                     QMessageBox.warning(self, "Błąd", "Niepoprawny symbol! Dopuszczalne są tylko litery, cyfry, znaki matematyczne i specjalne.")
