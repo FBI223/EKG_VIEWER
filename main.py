@@ -15,6 +15,125 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
+from PyQt6.QtGui import QAction
+from PyQt6 import QtWidgets, QtGui
+
+
+
+
+class NumericSortDelegate(QtWidgets.QStyledItemDelegate):
+    """ Klasa obsługująca sortowanie wartości liczbowych w tabeli PyQt. """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def compare(self, left, right):
+        """ Porównuje wartości jako liczby. """
+        return int(left) - int(right)
+
+    def lessThan(self, left, right):
+        """ Wymusza sortowanie numeryczne zamiast leksykograficznego. """
+        return int(left.data(QtCore.Qt.ItemDataRole.DisplayRole)) < int(right.data(QtCore.Qt.ItemDataRole.DisplayRole))
+
+
+
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None, current_settings=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ustawienia Wyglądu")
+        layout = QVBoxLayout(self)
+
+        self.dark_mode_checkbox = QtWidgets.QCheckBox("Tryb ciemny")
+        layout.addWidget(self.dark_mode_checkbox)
+
+        self.background_label = QLabel("Kolor tła interfejsu:")
+        layout.addWidget(self.background_label)
+        self.background_combo = QComboBox()
+        self.background_combo.addItems(["Domyślny", "Czarny", "Szary", "Biały", "Niebieski", "Zielony"])
+        layout.addWidget(self.background_combo)
+
+        self.plot_background_label = QLabel("Kolor tła wykresu:")
+        layout.addWidget(self.plot_background_label)
+        self.plot_background_combo = QComboBox()
+        self.plot_background_combo.addItems(["Domyślny", "Czarny", "Biały", "Szary", "Żółty", "Czerwony"])
+        layout.addWidget(self.plot_background_combo)
+
+        self.bottom_plot_background_label = QLabel("Kolor tła dolnego wykresu:")
+        layout.addWidget(self.bottom_plot_background_label)
+        self.bottom_plot_background_combo = QComboBox()
+        self.bottom_plot_background_combo.addItems(["Domyślny", "Czarny", "Biały", "Szary", "Żółty", "Czerwony"])
+        layout.addWidget(self.bottom_plot_background_combo)
+
+        self.grid_checkbox = QtWidgets.QCheckBox("Pokaż siatkę na wykresie")
+        layout.addWidget(self.grid_checkbox)
+
+        if current_settings:
+            self.dark_mode_checkbox.setChecked(current_settings["dark_mode"])
+            self.background_combo.setCurrentText(current_settings["background"])
+            self.plot_background_combo.setCurrentText(current_settings["plot_background"])
+            self.bottom_plot_background_combo.setCurrentText(current_settings["bottom_plot_background"])
+            self.grid_checkbox.setChecked(current_settings["show_grid"])
+
+        self.btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.btn_box.accepted.connect(self.accept)
+        self.btn_box.rejected.connect(self.reject)
+        layout.addWidget(self.btn_box)
+
+    def get_settings(self):
+        return {
+            "dark_mode": self.dark_mode_checkbox.isChecked(),
+            "background": self.background_combo.currentText(),
+            "plot_background": self.plot_background_combo.currentText(),
+            "bottom_plot_background": self.bottom_plot_background_combo.currentText(),
+            "show_grid": self.grid_checkbox.isChecked()
+        }
+
+
+class ATRInfoDialog(QDialog):
+    def __init__(self, annotations, fs, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Informacje o pliku ATR")
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Próbka", "Czas (s)", "Symbol"])
+        layout.addWidget(self.table)
+
+        self.btn_close = QPushButton("Zamknij")
+        self.btn_close.clicked.connect(self.accept)
+        layout.addWidget(self.btn_close)
+
+        # Włączenie sortowania w tabeli
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setVisible(False)
+
+        self.update_table(annotations, fs)
+
+        # Ustawienie niestandardowego sortowania
+        self.table.setItemDelegateForColumn(0, NumericSortDelegate(self.table))
+
+
+    def update_table(self, annotations, fs):
+        """ Aktualizacja tabeli z danymi i wymuszenie poprawnego sortowania. """
+        self.table.setSortingEnabled(False)  # Wyłącz sortowanie na czas aktualizacji
+
+        self.table.setRowCount(len(annotations.sample))
+        for row_idx, (sample, symbol) in enumerate(zip(annotations.sample, annotations.symbol)):
+            time_s = sample / fs
+
+            # Konwersja na liczby (żeby QTableWidgetItem przechowywał je jako liczby)
+            sample_item = QTableWidgetItem()
+            sample_item.setData(QtCore.Qt.ItemDataRole.DisplayRole, int(sample))  # Traktuj jako liczby
+            self.table.setItem(row_idx, 0, sample_item)
+
+            time_item = QTableWidgetItem(f"{time_s:.3f}")
+            self.table.setItem(row_idx, 1, time_item)
+
+            self.table.setItem(row_idx, 2, QTableWidgetItem(symbol))
+
+        self.table.setSortingEnabled(True)  # Włącz sortowanie z powrotem
+        self.table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)  # Posortuj po "Próbka" rosnąco
 
 
 
@@ -109,6 +228,11 @@ class ECGEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ECG Editor")
+
+        icon_path = "heart.ico"
+        self.setWindowIcon(QtGui.QIcon(icon_path))  # Ikona w rogu okna
+
+        self.atr_info_dialog = None
         self.record = None
         self.annotations = None  # Kopia pliku ATR – tu będą zmiany
         self.atr_original_path = ""  # Ścieżka oryginalnego pliku ATR
@@ -120,11 +244,35 @@ class ECGEditor(QMainWindow):
         self.drag_annotation = None
         self.drag_offset = 0
         self.drag_index = None
+        self.current_settings = {
+            "dark_mode": True,
+            "background": "Domyślny",
+            "plot_background": "Domyślny",
+            "bottom_plot_background": "Domyślny",
+            "show_grid": True
+        }
         self.initUI()
 
 
 
     def initUI(self):
+
+
+        # Tworzenie menu
+        menu_bar = self.menuBar()
+        settings_menu = menu_bar.addMenu("Ustawienia")
+        atr_info_menu = menu_bar.addMenu("Informacje")
+
+        settings_action = QAction("Styl interfejsu", self)
+        settings_action.triggered.connect(self.open_settings)
+        settings_menu.addAction(settings_action)
+
+        atr_info_action = QAction("Informacje o ATR", self)
+        atr_info_action.triggered.connect(self.show_atr_info)
+        atr_info_menu.addAction(atr_info_action)
+
+
+
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
@@ -197,69 +345,60 @@ class ECGEditor(QMainWindow):
         layout.addLayout(scroll_layout)
 
 
-        self.btn_show_info = QPushButton("Show Signal Info")
-        self.btn_show_info.clicked.connect(self.show_signal_info)
-        self.btn_show_info.setEnabled(False)  # Domyślnie zablokowane
-        layout.addWidget(self.btn_show_info)
+    @pyqtSlot()
+    def open_settings(self):
+        dialog = SettingsDialog(self, self.current_settings)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.current_settings = dialog.get_settings()
+            self.apply_visual_settings()
+
+    def apply_visual_settings(self):
+        settings = self.current_settings
+
+        if settings["dark_mode"]:
+            self.setStyleSheet("background-color: #222; color: white;")
+        else:
+            self.setStyleSheet("")
+
+        background_colors = {"Domyślny": "", "Czarny": "black", "Szary": "gray", "Biały": "white", "Niebieski": "blue", "Zielony": "green"}
+        color = background_colors.get(settings["background"], "")
+        self.setStyleSheet(f"background-color: {color};")
+
+        plot_colors = {"Domyślny": "white", "Czarny": "black", "Biały": "white", "Szary": "gray", "Żółty": "yellow", "Czerwony": "red"}
+        plot_color = plot_colors.get(settings["plot_background"], "white")
+        bottom_plot_color = plot_colors.get(settings["bottom_plot_background"], "white")
+        if hasattr(self, 'ax1') and hasattr(self, 'ax2'):
+            self.ax1.set_facecolor(plot_color)
+            self.ax2.set_facecolor(bottom_plot_color)
+            show_grid = settings["show_grid"]
+            self.ax1.grid(show_grid)
+            self.ax2.grid(show_grid)
+            self.canvas.draw()
 
 
-    def show_signal_info(self):
-        """ Wyświetla tabelę z danymi sygnału oraz adnotacjami z możliwością wyszukiwania próbki """
-        if self.record is None or self.annotations is None:
-            QMessageBox.warning(self, "Błąd", "Najpierw wczytaj pliki .dat i .atr!")
+
+    @pyqtSlot()
+    def show_atr_info(self):
+        """Zawsze tworzy nowe okno ATRInfoDialog z najnowszymi danymi."""
+        if self.annotations is None:
+            QMessageBox.warning(self, "Błąd", "Brak załadowanego pliku ATR!")
             return
 
-        fs = self.record.fs  # Częstotliwość próbkowania
-        total_samples = len(self.record.p_signal)  # Liczba próbek
+        # Upewniamy się, że zawsze tworzymy nowe okno
+        if self.atr_info_dialog is not None:
+            self.atr_info_dialog.close()
+            self.atr_info_dialog = None
 
-        # Pobranie adnotacji (jeśli brak, zostaną puste wartości)
-        annotation_dict = {int(s): sym for s, sym in zip(self.annotations.sample, self.annotations.symbol)}
-
-        # 🔹 **Lista próbek: co 100 + wszystkie z adnotacjami**
-        sample_indices = sorted(set(range(0, total_samples, 100)) | set(annotation_dict.keys()))
-
-        # Przygotowanie danych do tabeli (próbka, czas, wartość, adnotacja)
-        self.signal_data = [
-            (sample, (sample / fs) * 1000, self.record.p_signal[sample, 0], annotation_dict.get(sample, ""))
-            for sample in sample_indices
-        ]
-
-        # Tworzenie okna tabeli
-        self.dialog = QDialog(self)
-        self.dialog.setWindowTitle("Informacje o sygnale")
-        self.dialog.resize(1000, 700)  # **Większe okno**
-        layout = QVBoxLayout(self.dialog)
-
-        # Tworzenie tabeli
-        self.table = QtWidgets.QTableWidget(len(self.signal_data), 4)
-        self.table.setHorizontalHeaderLabels(["Próbka", "Czas (ms)", "Wartość", "Adnotacja"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(False)  # **Wyłączenie sortowania przy wypełnianiu**
-
-        # Wypełnianie tabeli
-        for row_idx, (sample_id, time_ms, value, annotation) in enumerate(self.signal_data):
-            item_sample = QtWidgets.QTableWidgetItem(str(sample_id))
-            item_sample.setData(QtCore.Qt.ItemDataRole.UserRole, sample_id)  # **Dane liczbowe do sortowania**
-            self.table.setItem(row_idx, 0, item_sample)
-
-            self.table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(f"{time_ms:.2f}"))
-            self.table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(f"{value:.3f}"))
-            self.table.setItem(row_idx, 3, QtWidgets.QTableWidgetItem(annotation))
-
-        self.table.setSortingEnabled(True)
-        self.table.sortItems(0, QtCore.Qt.SortOrder.AscendingOrder)  # **Sortowanie rosnące od razu**
-
-        layout.addWidget(self.table)
-
-        # Przycisk zamknięcia
-        btn_close = QPushButton("Zamknij")
-        btn_close.clicked.connect(self.dialog.accept)
-        layout.addWidget(btn_close)
-
-        self.dialog.setLayout(layout)
-        self.dialog.exec()
+        # Tworzymy nowe okno z najnowszymi danymi
+        self.atr_info_dialog = ATRInfoDialog(copy.deepcopy(self.annotations), self.record.fs, self)
+        self.atr_info_dialog.show()
 
 
+    @pyqtSlot()
+    def update_atr_info(self):
+        """Odświeża tabelę z informacjami o adnotacjach, jeśli okno jest otwarte."""
+        if self.atr_info_dialog and hasattr(self.atr_info_dialog, "update_table"):
+            self.atr_info_dialog.update_table(self.annotations, self.record.fs)
 
 
 
@@ -316,10 +455,9 @@ class ECGEditor(QMainWindow):
                     self.annotations.aux = np.array([''] * len(self.annotations.sample))
                 if not hasattr(self.annotations, 'symbol') or self.annotations.symbol is None:
                     self.annotations.symbol = ['?'] * len(self.annotations.sample)
-                self.update_plot()
 
+                self.update_plot()
                 self.btn_save_atr.setEnabled(True)
-                self.btn_show_info.setEnabled(True)
 
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
@@ -453,7 +591,6 @@ class ECGEditor(QMainWindow):
                     self.drag_offset = event.xdata - artist.get_position()[0]
                     return
 
-        # 🔹 Prawy przycisk myszy - USUWANIE adnotacji na dolnym wykresie
         if event.inaxes == self.ax2 and event.button == 3:
             for artist, idx in self.annot_artists:
                 contains, _ = artist.contains(event)
@@ -468,12 +605,12 @@ class ECGEditor(QMainWindow):
                         print(f"[DEBUG] Usuwanie adnotacji: idx={idx}, symbol={self.annotations.symbol[idx]}")
                         self.annotations.sample = np.delete(self.annotations.sample, idx)
                         del self.annotations.symbol[idx]
-
                         if hasattr(self.annotations, 'aux') and self.annotations.aux is not None:
                             self.annotations.aux = np.delete(self.annotations.aux, idx)
 
                         self.update_plot()
                         self.auto_save_atr()
+                        self.update_atr_info()
                     return
 
         # 🔹 Jeśli kliknięto PPM na głównym wykresie, dodajemy adnotację
@@ -494,6 +631,7 @@ class ECGEditor(QMainWindow):
 
                 print(f"[DEBUG] Dodawanie adnotacji: sample={sample_idx}, symbol={sym}")
 
+
                 if self.annotations is None:
                     self.annotations = wfdb.Annotation(
                         record_name=self.dat_file,
@@ -504,6 +642,7 @@ class ECGEditor(QMainWindow):
                         fs=fs
                     )
                 else:
+
                     self.annotations.sample = np.append(self.annotations.sample, sample_idx)
                     self.annotations.symbol = list(self.annotations.symbol) + [sym]
 
@@ -536,7 +675,8 @@ class ECGEditor(QMainWindow):
             self.drag_annotation = None
             self.drag_index = None
             self.update_plot()
-            self.auto_save_atr()  # Aktualizuj stan pliku ATR na dysku po zmianie
+            self.auto_save_atr()
+            self.update_atr_info()
 
 
 
@@ -562,14 +702,12 @@ class ECGEditor(QMainWindow):
                     self.annotations.aux[global_idx] = data["symbol"]
             self.update_plot()
             self.auto_save_atr()  # Zapisz zmiany
+            self.update_atr_info()
+
 
 if __name__ == '__main__':
-
-    import PyQt6.QtCore
-    print(PyQt6.QtCore.PYQT_VERSION_STR)
-
-
     app = QtWidgets.QApplication(sys.argv)
+    app.setWindowIcon(QtGui.QIcon("heart.ico"))  # Ikona aplikacji na pasku zadań
     editor = ECGEditor()
     editor.show()
     sys.exit(app.exec())
