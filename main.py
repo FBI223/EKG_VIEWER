@@ -260,6 +260,9 @@ class ECGEditor(QMainWindow):
 
         # Tworzenie menu
         menu_bar = self.menuBar()
+        if sys.platform == "darwin":
+            menu_bar.setNativeMenuBar(False)  # Wymusza menu w oknie aplikacji
+
         settings_menu = menu_bar.addMenu("Ustawienia")
         atr_info_menu = menu_bar.addMenu("Informacje")
 
