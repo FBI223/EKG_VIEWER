@@ -17,6 +17,7 @@ from matplotlib.backend_bases import MouseEvent
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
 from PyQt6.QtGui import QAction
 from PyQt6 import QtWidgets, QtGui
+import platform
 
 
 
@@ -42,8 +43,12 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Ustawienia Wyglądu")
         layout = QVBoxLayout(self)
 
-        self.dark_mode_checkbox = QtWidgets.QCheckBox("Tryb ciemny")
-        layout.addWidget(self.dark_mode_checkbox)
+        self.theme_label = QLabel("Tryb kolorów:")
+        layout.addWidget(self.theme_label)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["Neutralny", "Jasny", "Ciemny"])
+        layout.addWidget(self.theme_combo)
 
         self.background_label = QLabel("Kolor tła interfejsu:")
         layout.addWidget(self.background_label)
@@ -67,7 +72,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.grid_checkbox)
 
         if current_settings:
-            self.dark_mode_checkbox.setChecked(current_settings["dark_mode"])
+            self.theme_combo.setCurrentText(current_settings.get("theme", get_system_theme()))
             self.background_combo.setCurrentText(current_settings["background"])
             self.plot_background_combo.setCurrentText(current_settings["plot_background"])
             self.bottom_plot_background_combo.setCurrentText(current_settings["bottom_plot_background"])
@@ -80,7 +85,7 @@ class SettingsDialog(QDialog):
 
     def get_settings(self):
         return {
-            "dark_mode": self.dark_mode_checkbox.isChecked(),
+            "theme": self.theme_combo.currentText(),  # Klucz theme zawsze obecny!
             "background": self.background_combo.currentText(),
             "plot_background": self.plot_background_combo.currentText(),
             "bottom_plot_background": self.bottom_plot_background_combo.currentText(),
@@ -245,7 +250,7 @@ class ECGEditor(QMainWindow):
         self.drag_offset = 0
         self.drag_index = None
         self.current_settings = {
-            "dark_mode": True,
+            "theme": get_system_theme(),
             "background": "Domyślny",
             "plot_background": "Domyślny",
             "bottom_plot_background": "Domyślny",
@@ -347,7 +352,6 @@ class ECGEditor(QMainWindow):
 
         layout.addLayout(scroll_layout)
 
-
     @pyqtSlot()
     def open_settings(self):
         dialog = SettingsDialog(self, self.current_settings)
@@ -357,28 +361,40 @@ class ECGEditor(QMainWindow):
 
     def apply_visual_settings(self):
         settings = self.current_settings
+        theme = settings["theme"]
 
-        if settings["dark_mode"]:
+        # Modyfikacja GUI
+        if theme == "Ciemny":
             self.setStyleSheet("background-color: #222; color: white;")
+            plot_bg = "black"
+            font_color = "white"
+        elif theme == "Jasny":
+            self.setStyleSheet("background-color: #FFF; color: black;")
+            plot_bg = "white"
+            font_color = "black"
         else:
-            self.setStyleSheet("")
+            self.setStyleSheet("")  # Neutralny - domyślny systemowy styl
+            plot_bg = "lightgray"
+            font_color = "black"
 
-        background_colors = {"Domyślny": "", "Czarny": "black", "Szary": "gray", "Biały": "white", "Niebieski": "blue", "Zielony": "green"}
-        color = background_colors.get(settings["background"], "")
-        self.setStyleSheet(f"background-color: {color};")
-
-        plot_colors = {"Domyślny": "white", "Czarny": "black", "Biały": "white", "Szary": "gray", "Żółty": "yellow", "Czerwony": "red"}
-        plot_color = plot_colors.get(settings["plot_background"], "white")
-        bottom_plot_color = plot_colors.get(settings["bottom_plot_background"], "white")
+        # Zmiana wykresów matplotlib
         if hasattr(self, 'ax1') and hasattr(self, 'ax2'):
-            self.ax1.set_facecolor(plot_color)
-            self.ax2.set_facecolor(bottom_plot_color)
-            show_grid = settings["show_grid"]
-            self.ax1.grid(show_grid)
-            self.ax2.grid(show_grid)
+            self.ax1.set_facecolor(plot_bg)
+            self.ax2.set_facecolor(plot_bg)
+            self.ax1.grid(settings["show_grid"])
+            self.ax2.grid(settings["show_grid"])
+
+            # Zmiana koloru etykiet i siatki
+            self.ax1.xaxis.label.set_color(font_color)
+            self.ax1.yaxis.label.set_color(font_color)
+            self.ax2.xaxis.label.set_color(font_color)
+
+            for spine in self.ax1.spines.values():
+                spine.set_color(font_color)
+            for spine in self.ax2.spines.values():
+                spine.set_color(font_color)
+
             self.canvas.draw()
-
-
 
     @pyqtSlot()
     def show_atr_info(self):
@@ -706,6 +722,43 @@ class ECGEditor(QMainWindow):
             self.update_plot()
             self.auto_save_atr()  # Zapisz zmiany
             self.update_atr_info()
+
+
+
+def get_system_theme():
+    """ Wczytuje tryb kolorów z systemu operacyjnego """
+    system = platform.system()
+
+    if system == "Windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "Jasny" if value == 1 else "Ciemny"
+        except Exception as e:
+            print("Błąd wczytywania motywu systemowego Windows:", e)
+            return "Neutralny"
+
+    elif system == "Darwin":  # macOS
+        try:
+            from subprocess import run
+            result = run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
+            return "Ciemny" if "Dark" in result.stdout else "Jasny"
+        except Exception as e:
+            print("Błąd wczytywania motywu systemowego macOS:", e)
+            return "Neutralny"
+
+    elif system == "Linux":
+        try:
+            import subprocess
+            result = subprocess.run(["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"], capture_output=True, text=True)
+            return "Ciemny" if "dark" in result.stdout.lower() else "Jasny"
+        except Exception as e:
+            print("Błąd wczytywania motywu systemowego Linux:", e)
+            return "Neutralny"
+
+    return "Neutralny"  # Domyślnie
+
 
 
 if __name__ == '__main__':
