@@ -90,9 +90,6 @@ class SettingsDialog(QDialog):
         self.btn_main_bg.clicked.connect(lambda: self.choose_color("main_bg_color", self.btn_main_bg))
         layout.addWidget(self.btn_main_bg)
 
-        self.grid_checkbox = QtWidgets.QCheckBox("Pokaż siatkę na wykresie")
-        layout.addWidget(self.grid_checkbox)
-
         # Jeśli mamy poprzednie ustawienia, zaktualizuj interfejs
         if current_settings:
             self.theme_combo.setCurrentText(current_settings.get("theme", "Ciemny"))
@@ -102,7 +99,6 @@ class SettingsDialog(QDialog):
             self.btn_annotation_marker.setStyleSheet(f"background-color: {current_settings.get('annotation_marker_color', '#FF4500')}")
             self.btn_annotation_text.setStyleSheet(f"background-color: {current_settings.get('annotation_text_color', '#FFFFFF')}")
             self.btn_main_bg.setStyleSheet(f"background-color: {current_settings.get('main_bg_color', '#000000')}")
-            self.grid_checkbox.setChecked(current_settings.get("show_grid", True))
 
         self.on_theme_changed(self.theme_combo.currentText())
 
@@ -175,7 +171,6 @@ class SettingsDialog(QDialog):
             "annotation_marker_color": self.current_settings.get("annotation_marker_color", "#FF4500"),
             "annotation_text_color": self.current_settings.get("annotation_text_color", "#FFFFFF"),
             "main_bg_color": self.current_settings.get("main_bg_color", "#000000"),
-            "show_grid": self.grid_checkbox.isChecked()
         }
 
 
@@ -183,8 +178,9 @@ class ATRInfoDialog(QDialog):
     def __init__(self, annotations, fs, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Informacje o pliku ATR")
-        layout = QVBoxLayout(self)
+        self.resize(400, 600)  # Zwiększenie rozmiaru okna (600 px szerokości, 500 px wysokości)
 
+        layout = QVBoxLayout(self)
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Próbka", "Czas (s)", "Symbol"])
@@ -359,9 +355,19 @@ class ECGEditor(QMainWindow):
             "annotation_marker_color": "#FF4500",
             "annotation_text_color": "#000000",  # W trybie neutralnym tekst – czarny
             "main_bg_color": "#000000",
-            "show_grid": True
         }
+
         self.initUI()
+        self.center_window()  # Wycentrowanie okna
+
+    def center_window(self):
+        """Centruje okno na środku ekranu."""
+        self.show()  # Upewnij się, że okno jest już widoczne
+        screen = QtWidgets.QApplication.primaryScreen().geometry()  # Pobierz wymiary ekranu
+        window = self.geometry()  # Pobierz aktualne wymiary okna
+        x = (screen.width() - window.width()) // 2
+        y = (screen.height() - window.height()) // 2
+        self.move(x, y)  # Przesuń okno na środek
 
 
     def initUI(self):
@@ -380,7 +386,7 @@ class ECGEditor(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-        self.canvas = FigureCanvas(plt.Figure(figsize=(10, 5)))
+        self.canvas = FigureCanvas(plt.Figure(figsize=(20, 10)))
         layout.addWidget(self.canvas)
         self.ax1, self.ax2 = self.canvas.figure.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1]})
         self.ax1.set_xlabel("Czas (s)")
@@ -469,11 +475,8 @@ class ECGEditor(QMainWindow):
         self.ax1.set_facecolor(ax1_bg)
         self.ax2.set_facecolor(ax2_bg)
 
-        self.ax1.grid(settings["show_grid"])
-        if theme == "Ciemny" and settings["show_grid"]:
-            self.ax2.grid(True, axis='y', color="white", linestyle="--", alpha=0.6)
-        else:
-            self.ax2.grid(False)
+        self.ax1.grid(True)
+        self.ax2.grid(True)
 
         self.ax1.xaxis.label.set_color(font_color)
         self.ax1.yaxis.label.set_color(font_color)
@@ -780,12 +783,16 @@ class ECGEditor(QMainWindow):
                 else:
 
                     self.annotations.sample = np.append(self.annotations.sample, sample_idx)
-                    self.annotations.symbol = list(self.annotations.symbol) + [sym]
-
+                    self.annotations.symbol.append(sym)
                     if hasattr(self.annotations, 'aux') and self.annotations.aux is not None:
                         self.annotations.aux = np.append(self.annotations.aux, sym)
                     else:
                         self.annotations.aux = np.array([sym] * len(self.annotations.sample))
+
+                        # 🔥 NOWE: Sortowanie po dodaniu adnotacji
+                sort_idx = np.argsort(self.annotations.sample)
+                self.annotations.sample = self.annotations.sample[sort_idx]
+                self.annotations.symbol = np.array(self.annotations.symbol)[sort_idx].tolist()
 
                 self.update_plot()
                 self.auto_save_atr()  # Zapisanie zmiany od razu
@@ -808,6 +815,12 @@ class ECGEditor(QMainWindow):
             new_sample = int(round(new_time * fs))
             if self.annotations is not None and self.drag_index is not None:
                 self.annotations.sample[self.drag_index] = new_sample
+
+                sort_idx = np.argsort(self.annotations.sample)
+                self.annotations.sample = self.annotations.sample[sort_idx]
+                self.annotations.symbol = np.array(self.annotations.symbol)[sort_idx].tolist()
+
+
             self.drag_annotation = None
             self.drag_index = None
             self.update_plot()
