@@ -4,7 +4,7 @@ import os
 import re
 import numpy as np
 import wfdb
-from PyQt6 import QtWidgets, QtCore
+from PyQt6 import  QtCore
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog, QVBoxLayout, QWidget,
     QLabel, QScrollBar, QHBoxLayout, QMessageBox, QComboBox,
@@ -15,7 +15,6 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt6.QtGui import QAction
 from PyQt6 import QtWidgets, QtGui
 import platform
 
@@ -38,57 +37,144 @@ class NumericSortDelegate(QtWidgets.QStyledItemDelegate):
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None, current_settings=None):
+    def __init__(self, parent=None, current_settings=None, preset_dark=None, preset_light=None):
         super().__init__(parent)
+        self.preset_dark = preset_dark
+        self.preset_light = preset_light
         self.setWindowTitle("Ustawienia Wyglądu")
+        self.current_settings = current_settings.copy() if current_settings else {}
         layout = QVBoxLayout(self)
 
+        # --- Lista dostępnych trybów ---
         self.theme_label = QLabel("Tryb kolorów:")
         layout.addWidget(self.theme_label)
-
         self.theme_combo = QComboBox()
+        # Dostępne tryby: Neutralny, Jasny, Ciemny
         self.theme_combo.addItems(["Neutralny", "Jasny", "Ciemny"])
         layout.addWidget(self.theme_combo)
+        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
 
-        self.background_label = QLabel("Kolor tła interfejsu:")
-        layout.addWidget(self.background_label)
-        self.background_combo = QComboBox()
-        self.background_combo.addItems(["Domyślny", "Czarny", "Szary", "Biały", "Niebieski", "Zielony"])
-        layout.addWidget(self.background_combo)
-
-        self.plot_background_label = QLabel("Kolor tła wykresu:")
+        self.plot_background_label = QLabel("Kolor tła wykresu 1:")
         layout.addWidget(self.plot_background_label)
-        self.plot_background_combo = QComboBox()
-        self.plot_background_combo.addItems(["Domyślny", "Czarny", "Biały", "Szary", "Żółty", "Czerwony"])
-        layout.addWidget(self.plot_background_combo)
+        self.btn_ax1_bg = QPushButton("Wybierz kolor")
+        self.btn_ax1_bg.clicked.connect(lambda: self.choose_color("ax1_bg_color", self.btn_ax1_bg))
+        layout.addWidget(self.btn_ax1_bg)
 
-        self.bottom_plot_background_label = QLabel("Kolor tła dolnego wykresu:")
+        self.bottom_plot_background_label = QLabel("Kolor tła wykresu 2:")
         layout.addWidget(self.bottom_plot_background_label)
-        self.bottom_plot_background_combo = QComboBox()
-        self.bottom_plot_background_combo.addItems(["Domyślny", "Czarny", "Biały", "Szary", "Żółty", "Czerwony"])
-        layout.addWidget(self.bottom_plot_background_combo)
+        self.btn_ax2_bg = QPushButton("Wybierz kolor")
+        self.btn_ax2_bg.clicked.connect(lambda: self.choose_color("ax2_bg_color", self.btn_ax2_bg))
+        layout.addWidget(self.btn_ax2_bg)
+
+        self.ecg_line_label = QLabel("Kolor wykresu (ECG):")
+        layout.addWidget(self.ecg_line_label)
+        self.btn_ecg_line = QPushButton("Wybierz kolor")
+        self.btn_ecg_line.clicked.connect(lambda: self.choose_color("ecg_line_color", self.btn_ecg_line))
+        layout.addWidget(self.btn_ecg_line)
+
+        self.annotation_marker_label = QLabel("Kolor markerów adnotacji:")
+        layout.addWidget(self.annotation_marker_label)
+        self.btn_annotation_marker = QPushButton("Wybierz kolor")
+        self.btn_annotation_marker.clicked.connect(lambda: self.choose_color("annotation_marker_color", self.btn_annotation_marker))
+        layout.addWidget(self.btn_annotation_marker)
+
+        self.annotation_text_label = QLabel("Kolor tekstu adnotacji:")
+        layout.addWidget(self.annotation_text_label)
+        self.btn_annotation_text = QPushButton("Wybierz kolor")
+        self.btn_annotation_text.clicked.connect(lambda: self.choose_color("annotation_text_color", self.btn_annotation_text))
+        layout.addWidget(self.btn_annotation_text)
+
+        self.main_bg_label = QLabel("Kolor tła głównego:")
+        layout.addWidget(self.main_bg_label)
+        self.btn_main_bg = QPushButton("Wybierz kolor")
+        self.btn_main_bg.clicked.connect(lambda: self.choose_color("main_bg_color", self.btn_main_bg))
+        layout.addWidget(self.btn_main_bg)
 
         self.grid_checkbox = QtWidgets.QCheckBox("Pokaż siatkę na wykresie")
         layout.addWidget(self.grid_checkbox)
 
+        # Jeśli mamy poprzednie ustawienia, zaktualizuj interfejs
         if current_settings:
-            self.theme_combo.setCurrentText(current_settings.get("theme", get_system_theme()))
-            self.background_combo.setCurrentText(current_settings["background"])
-            self.plot_background_combo.setCurrentText(current_settings["plot_background"])
-            self.bottom_plot_background_combo.setCurrentText(current_settings["bottom_plot_background"])
-            self.grid_checkbox.setChecked(current_settings["show_grid"])
+            self.theme_combo.setCurrentText(current_settings.get("theme", "Ciemny"))
+            self.btn_ax1_bg.setStyleSheet(f"background-color: {current_settings.get('ax1_bg_color', '#000000')}")
+            self.btn_ax2_bg.setStyleSheet(f"background-color: {current_settings.get('ax2_bg_color', '#000000')}")
+            self.btn_ecg_line.setStyleSheet(f"background-color: {current_settings.get('ecg_line_color', '#1E90FF')}")
+            self.btn_annotation_marker.setStyleSheet(f"background-color: {current_settings.get('annotation_marker_color', '#FF4500')}")
+            self.btn_annotation_text.setStyleSheet(f"background-color: {current_settings.get('annotation_text_color', '#FFFFFF')}")
+            self.btn_main_bg.setStyleSheet(f"background-color: {current_settings.get('main_bg_color', '#000000')}")
+            self.grid_checkbox.setChecked(current_settings.get("show_grid", True))
+
+        self.on_theme_changed(self.theme_combo.currentText())
 
         self.btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.btn_box.accepted.connect(self.accept)
         self.btn_box.rejected.connect(self.reject)
         layout.addWidget(self.btn_box)
 
+
+
+    def on_theme_changed(self, theme):
+        # Jeśli wybrano Ciemny lub Jasny – nadpisujemy current_settings
+        if theme == "Ciemny":
+            self.current_settings = self.parent().preset_dark.copy()
+            self.btn_ax1_bg.setStyleSheet(f"background-color: {self.current_settings['ax1_bg_color']}")
+            self.btn_ax2_bg.setStyleSheet(f"background-color: {self.current_settings['ax2_bg_color']}")
+            self.btn_ecg_line.setStyleSheet(f"background-color: {self.current_settings['ecg_line_color']}")
+            self.btn_annotation_marker.setStyleSheet(f"background-color: {self.current_settings['annotation_marker_color']}")
+            self.btn_annotation_text.setStyleSheet(f"background-color: {self.current_settings['annotation_text_color']}")
+            self.btn_main_bg.setStyleSheet(f"background-color: {self.current_settings['main_bg_color']}")
+            # Wyłącz możliwość modyfikacji presetów
+            self.btn_ax1_bg.setEnabled(False)
+            self.btn_ax2_bg.setEnabled(False)
+            self.btn_ecg_line.setEnabled(False)
+            self.btn_annotation_marker.setEnabled(False)
+            self.btn_annotation_text.setEnabled(False)
+            self.btn_main_bg.setEnabled(False)
+        elif theme == "Jasny":
+            self.current_settings = self.parent().preset_light.copy()
+            self.btn_ax1_bg.setStyleSheet(f"background-color: {self.current_settings['ax1_bg_color']}")
+            self.btn_ax2_bg.setStyleSheet(f"background-color: {self.current_settings['ax2_bg_color']}")
+            self.btn_ecg_line.setStyleSheet(f"background-color: {self.current_settings['ecg_line_color']}")
+            self.btn_annotation_marker.setStyleSheet(f"background-color: {self.current_settings['annotation_marker_color']}")
+            self.btn_annotation_text.setStyleSheet(f"background-color: {self.current_settings['annotation_text_color']}")
+            self.btn_main_bg.setStyleSheet(f"background-color: {self.current_settings['main_bg_color']}")
+            self.btn_ax1_bg.setEnabled(False)
+            self.btn_ax2_bg.setEnabled(False)
+            self.btn_ecg_line.setEnabled(False)
+            self.btn_annotation_marker.setEnabled(False)
+            self.btn_annotation_text.setEnabled(False)
+            self.btn_main_bg.setEnabled(False)
+        else:
+            # W trybie Neutralnym pozostawiamy bieżące ustawienia – nie nadpisujemy
+            self.btn_ax1_bg.setEnabled(True)
+            self.btn_ax2_bg.setEnabled(True)
+            self.btn_ecg_line.setEnabled(True)
+            self.btn_annotation_marker.setEnabled(True)
+            self.btn_annotation_text.setEnabled(True)
+            self.btn_main_bg.setEnabled(True)
+
+
+    # W metodzie choose_color (w SettingsDialog) dodajemy natychmiastowe odświeżenie:
+    def choose_color(self, key, button):
+        color = QtWidgets.QColorDialog.getColor()
+        if color.isValid():
+            hex_color = color.name()
+            self.current_settings[key] = hex_color
+            button.setStyleSheet(f"background-color: {hex_color}")
+            p = self.parent()
+            if p and hasattr(p, "update_plot"):
+                QtCore.QTimer.singleShot(0, p.update_plot)
+
     def get_settings(self):
+        """Zwraca finalne ustawienia z dialogu."""
         return {
-            "theme": self.theme_combo.currentText(),  # Klucz theme zawsze obecny!
-            "background": self.background_combo.currentText(),
-            "plot_background": self.plot_background_combo.currentText(),
-            "bottom_plot_background": self.bottom_plot_background_combo.currentText(),
+            "theme": self.theme_combo.currentText(),
+            "ax1_bg_color": self.current_settings.get("ax1_bg_color", "#000000"),
+            "ax2_bg_color": self.current_settings.get("ax2_bg_color", "#000000"),
+            "ecg_line_color": self.current_settings.get("ecg_line_color", "#1E90FF"),
+            "annotation_marker_color": self.current_settings.get("annotation_marker_color", "#FF4500"),
+            "annotation_text_color": self.current_settings.get("annotation_text_color", "#FFFFFF"),
+            "main_bg_color": self.current_settings.get("main_bg_color", "#000000"),
             "show_grid": self.grid_checkbox.isChecked()
         }
 
@@ -233,69 +319,75 @@ class ECGEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ECG Editor")
-
         icon_path = "heart.ico"
-        self.setWindowIcon(QtGui.QIcon(icon_path))  # Ikona w rogu okna
-
+        self.setWindowIcon(QtGui.QIcon(icon_path))
         self.atr_info_dialog = None
         self.record = None
-        self.annotations = None  # Kopia pliku ATR – tu będą zmiany
-        self.atr_original_path = ""  # Ścieżka oryginalnego pliku ATR
+        self.annotations = None
+        self.atr_original_path = ""
         self.dat_file = ""
-        self.atr_file = ""  # Ścieżka, na której pracujemy
+        self.atr_file = ""
         self.window_size_s = 5
         self.current_start = 0
         self.annot_artists = []
         self.drag_annotation = None
         self.drag_offset = 0
         self.drag_index = None
+
+        self.preset_dark = {
+            "ax1_bg_color": "#000000",
+            "ax2_bg_color": "#000000",
+            "ecg_line_color": "#1E90FF",
+            "annotation_marker_color": "#FF4500",
+            "annotation_text_color": "#FFFFFF",  # Białe napisy
+            "main_bg_color": "#000000"
+        }
+        self.preset_light = {
+            "ax1_bg_color": "#FFFFFF",
+            "ax2_bg_color": "#FFFFFF",
+            "ecg_line_color": "#0000FF",
+            "annotation_marker_color": "#FF0000",
+            "annotation_text_color": "#000000",
+            "main_bg_color": "#FFFFFF"
+        }
         self.current_settings = {
-            "theme": get_system_theme(),
+            "theme": "Neutralny",
             "background": "Domyślny",
-            "plot_background": "Domyślny",
-            "bottom_plot_background": "Domyślny",
+            "ax1_bg_color": "#000000",       # Ustawienia neutralne – użytkownik może je zmieniać
+            "ax2_bg_color": "#000000",
+            "ecg_line_color": "#1E90FF",
+            "annotation_marker_color": "#FF4500",
+            "annotation_text_color": "#000000",  # W trybie neutralnym tekst – czarny
+            "main_bg_color": "#000000",
             "show_grid": True
         }
         self.initUI()
 
 
-
     def initUI(self):
-
-
-        # Tworzenie menu
         menu_bar = self.menuBar()
         if sys.platform == "darwin":
-            menu_bar.setNativeMenuBar(False)  # Wymusza menu w oknie aplikacji
-
+            menu_bar.setNativeMenuBar(False)
         settings_menu = menu_bar.addMenu("Ustawienia")
         atr_info_menu = menu_bar.addMenu("Informacje")
-
-        settings_action = QAction("Styl interfejsu", self)
+        settings_action = QtGui.QAction("Styl interfejsu", self)
         settings_action.triggered.connect(self.open_settings)
         settings_menu.addAction(settings_action)
-
-        atr_info_action = QAction("Informacje o ATR", self)
+        atr_info_action = QtGui.QAction("Informacje o ATR", self)
         atr_info_action.triggered.connect(self.show_atr_info)
         atr_info_menu.addAction(atr_info_action)
-
-
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
-
-        self.canvas = FigureCanvas(plt.Figure(figsize=(20, 10)))
+        self.canvas = FigureCanvas(plt.Figure(figsize=(10, 5)))
         layout.addWidget(self.canvas)
-        self.ax1, self.ax2 = self.canvas.figure.subplots(
-            2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1]}
-        )
+        self.ax1, self.ax2 = self.canvas.figure.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1]})
         self.ax1.set_xlabel("Czas (s)")
         self.ax2.set_xlabel("Czas (s)")
         self.ax1.grid(True)
         self.ax2.grid(True)
         self.ax2.get_yaxis().set_visible(False)
-
         self.canvas.mpl_connect('button_press_event', self.on_press)
         self.canvas.mpl_connect('motion_notify_event', self.on_motion)
         self.canvas.mpl_connect('button_release_event', self.on_release)
@@ -304,97 +396,100 @@ class ECGEditor(QMainWindow):
         self.btn_load_dat = QPushButton("Wczytaj .dat")
         self.btn_load_dat.clicked.connect(self.load_dat)
         file_btn_layout.addWidget(self.btn_load_dat)
-
         self.btn_load_atr = QPushButton("Wczytaj .atr/.ii")
         self.btn_load_atr.clicked.connect(self.load_atr)
-        self.btn_load_atr.setEnabled(False)  # Plik ATR można wczytać dopiero po pliku DAT
+        self.btn_load_atr.setEnabled(False)
         file_btn_layout.addWidget(self.btn_load_atr)
-
         self.btn_save_atr = QPushButton("Zapisz .atr/.ii")
         self.btn_save_atr.clicked.connect(self.save_atr)
-        self.btn_save_atr.setEnabled(False)  # Zablokowane na starcie
+        self.btn_save_atr.setEnabled(False)
         file_btn_layout.addWidget(self.btn_save_atr)
-
         layout.addLayout(file_btn_layout)
 
         lead_layout = QHBoxLayout()
         self.label_lead = QLabel("Lead:")
         lead_layout.addWidget(self.label_lead)
-
         self.combo_leads = QComboBox()
         self.combo_leads.currentIndexChanged.connect(self.update_plot)
-        self.combo_leads.setEnabled(False)  # Zablokowane na starcie
+        self.combo_leads.setEnabled(False)
         lead_layout.addWidget(self.combo_leads)
-
         layout.addLayout(lead_layout)
 
         time_layout = QHBoxLayout()
         self.label_time = QLabel("Czas okna (s):")
         time_layout.addWidget(self.label_time)
-
         self.slider_time_window = QSlider(QtCore.Qt.Orientation.Horizontal)
         self.slider_time_window.setRange(1, 30)
         self.slider_time_window.setValue(self.window_size_s)
         self.slider_time_window.valueChanged.connect(self.update_window_size)
-        self.slider_time_window.setEnabled(False)  # Zablokowane na starcie
+        self.slider_time_window.setEnabled(False)
         time_layout.addWidget(self.slider_time_window)
-
         layout.addLayout(time_layout)
 
         scroll_layout = QHBoxLayout()
         self.label_scroll = QLabel("Przewijanie:")
         scroll_layout.addWidget(self.label_scroll)
-
         self.scroll_bar = QScrollBar(QtCore.Qt.Orientation.Horizontal)
         self.scroll_bar.valueChanged.connect(self.scroll_changed)
-        self.scroll_bar.setEnabled(False)  # Zablokowane na starcie
+        self.scroll_bar.setEnabled(False)
         scroll_layout.addWidget(self.scroll_bar)
-
         layout.addLayout(scroll_layout)
 
-    @pyqtSlot()
     def open_settings(self):
-        dialog = SettingsDialog(self, self.current_settings)
+        dialog = SettingsDialog(self, self.current_settings, self.preset_dark, self.preset_light)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.current_settings = dialog.get_settings()
             self.apply_visual_settings()
+            self.update_plot()
+
 
     def apply_visual_settings(self):
         settings = self.current_settings
         theme = settings["theme"]
 
-        # Modyfikacja GUI
         if theme == "Ciemny":
-            self.setStyleSheet("background-color: #222; color: white;")
-            plot_bg = "black"
+            main_bg = "#000000"
+            ax1_bg = "#000000"
+            ax2_bg = "#000000"
             font_color = "white"
         elif theme == "Jasny":
-            self.setStyleSheet("background-color: #FFF; color: black;")
-            plot_bg = "white"
+            main_bg = "#FFFFFF"
+            ax1_bg = "#FFFFFF"
+            ax2_bg = "#FFFFFF"
             font_color = "black"
         else:
-            self.setStyleSheet("")  # Neutralny - domyślny systemowy styl
-            plot_bg = "lightgray"
-            font_color = "black"
+            main_bg = settings.get("main_bg_color", "#000000")
+            ax1_bg = settings.get("ax1_bg_color", "#000000")
+            ax2_bg = settings.get("ax2_bg_color", "#000000")
+            font_color = "white"
 
-        # Zmiana wykresów matplotlib
-        if hasattr(self, 'ax1') and hasattr(self, 'ax2'):
-            self.ax1.set_facecolor(plot_bg)
-            self.ax2.set_facecolor(plot_bg)
-            self.ax1.grid(settings["show_grid"])
-            self.ax2.grid(settings["show_grid"])
+        self.setStyleSheet(f"background-color: {main_bg}; color: {font_color};")
+        self.canvas.figure.patch.set_facecolor(ax1_bg)
+        self.canvas.figure.patch.set_edgecolor(ax1_bg)
+        self.ax1.set_facecolor(ax1_bg)
+        self.ax2.set_facecolor(ax2_bg)
 
-            # Zmiana koloru etykiet i siatki
-            self.ax1.xaxis.label.set_color(font_color)
-            self.ax1.yaxis.label.set_color(font_color)
-            self.ax2.xaxis.label.set_color(font_color)
+        self.ax1.grid(settings["show_grid"])
+        if theme == "Ciemny" and settings["show_grid"]:
+            self.ax2.grid(True, axis='y', color="white", linestyle="--", alpha=0.6)
+        else:
+            self.ax2.grid(False)
 
-            for spine in self.ax1.spines.values():
-                spine.set_color(font_color)
-            for spine in self.ax2.spines.values():
-                spine.set_color(font_color)
+        self.ax1.xaxis.label.set_color(font_color)
+        self.ax1.yaxis.label.set_color(font_color)
 
-            self.canvas.draw()
+        self.ax2.set_xlabel("Czas (s)")
+        self.ax2.xaxis.get_label().set_color(font_color)
+
+        for spine in self.ax1.spines.values():
+            spine.set_color(font_color)
+        for spine in self.ax2.spines.values():
+            spine.set_color(font_color)
+
+        self.ax1.tick_params(axis='both', colors=font_color)
+        self.ax2.tick_params(axis='both', colors=font_color)
+
+        self.canvas.draw()
 
     @pyqtSlot()
     def show_atr_info(self):
@@ -443,43 +538,35 @@ class ECGEditor(QMainWindow):
                 self.populate_leads()
                 self.setup_scroll()
                 self.update_plot()
-
-
                 self.combo_leads.setEnabled(True)
                 self.slider_time_window.setEnabled(True)
                 self.scroll_bar.setEnabled(True)
                 self.btn_load_atr.setEnabled(True)
-
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
 
-
     @pyqtSlot()
     def load_atr(self) -> None:
-
         if not self.record:
             QMessageBox.warning(self, "Błąd", "Najpierw wczytaj plik .dat!")
             return
-
         file_path, _ = QFileDialog.getOpenFileName(self, "Wczytaj .atr/.ii", "", "Pliki ATR (*.atr *.ii)")
         if file_path:
-            self.atr_original_path = file_path  # Zapamiętujemy oryginalną ścieżkę
-            self.atr_file = file_path  # Pracujemy na tym pliku (w kopii)
+            self.atr_original_path = file_path
+            self.atr_file = file_path
             ext = file_path.split('.')[-1]
             try:
-                # Tworzymy głęboką kopię adnotacji z oryginalnego pliku
                 original_ann = wfdb.rdann(self.dat_file, ext)
                 self.annotations = copy.deepcopy(original_ann)
                 if not hasattr(self.annotations, 'aux') or self.annotations.aux is None:
                     self.annotations.aux = np.array([''] * len(self.annotations.sample))
                 if not hasattr(self.annotations, 'symbol') or self.annotations.symbol is None:
                     self.annotations.symbol = ['?'] * len(self.annotations.sample)
-
                 self.update_plot()
                 self.btn_save_atr.setEnabled(True)
-
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
+
 
     def auto_save_atr(self) -> None:
         if self.atr_file and self.annotations is not None and self.record is not None:
@@ -561,9 +648,11 @@ class ECGEditor(QMainWindow):
         self.ax1.clear()
         self.ax2.clear()
         self.annot_artists = []
+
         if self.record is None:
             self.canvas.draw()
             return
+
         fs = self.record.fs
         total = self.record.p_signal.shape[0]
         win_samples = int(self.window_size_s * fs)
@@ -572,26 +661,54 @@ class ECGEditor(QMainWindow):
         lead = self.combo_leads.currentIndex() if self.combo_leads.currentIndex() >= 0 else 0
         sig = self.record.p_signal[start:end, lead]
         t = np.arange(start, end) / fs
-        self.ax1.plot(t, sig, 'b-')
-        self.ax1.set_xlabel("Czas (s)")
+
+        ecg_line_color = self.current_settings.get("ecg_line_color", "#1E90FF")
+        annotation_marker_color = self.current_settings.get("annotation_marker_color", "#FF4500")
+        annotation_text_color = self.current_settings.get("annotation_text_color", "#FFFFFF")
+        font_color = "white" if self.current_settings["theme"] == "Ciemny" else "black"
+
+        # Top plot
+        self.ax1.plot(t, sig, color=ecg_line_color)
+        self.ax1.set_xlabel("Czas (s)", color=font_color)
         self.ax1.grid(True)
+
+        # Annotations on top plot
         if self.annotations is not None and len(self.annotations.sample):
             ann_mask = (self.annotations.sample >= start) & (self.annotations.sample < end)
             ann_samples = self.annotations.sample[ann_mask]
             ann_times = ann_samples / fs
             ann_syms = np.array(self.annotations.symbol)[ann_mask]
-            self.ax1.plot(ann_times, sig[ann_samples - start], 'r^')
+
+            self.ax1.plot(
+                ann_times,
+                sig[ann_samples - start],
+                marker='^',
+                linestyle='',
+                color=annotation_marker_color,
+                markersize=8
+            )
+
             for i, (at, sym) in enumerate(zip(ann_times, ann_syms)):
-                art = self.ax2.text(at, 0, sym, ha='center', va='center', fontsize=10, picker=True)
+                art = self.ax2.text(
+                    at, 0, sym,
+                    ha='center', va='center',
+                    fontsize=10, picker=True,
+                    color=annotation_text_color,
+                    bbox=dict(facecolor='none', edgecolor='none')
+                )
                 global_idx = np.where(self.annotations.sample == ann_samples[i])[0][0]
                 self.annot_artists.append((art, global_idx))
+
+        # Bottom plot
         self.ax2.set_xlim(self.ax1.get_xlim())
         self.ax2.set_ylim(-1, 1)
-        self.ax2.set_xlabel("Czas (s)")
         self.ax2.get_yaxis().set_visible(False)
+        self.ax2.set_xlabel("Czas (s)", color=font_color)
+
+        self.ax1.tick_params(axis='both', colors=font_color)
+        self.ax2.tick_params(axis='both', colors=font_color)
+
         self.canvas.draw()
-
-
 
     @pyqtSlot(object)
     def on_press(self, event: MouseEvent) -> None:
@@ -726,9 +843,7 @@ class ECGEditor(QMainWindow):
 
 
 def get_system_theme():
-    """ Wczytuje tryb kolorów z systemu operacyjnego """
     system = platform.system()
-
     if system == "Windows":
         try:
             import winreg
@@ -738,8 +853,7 @@ def get_system_theme():
         except Exception as e:
             print("Błąd wczytywania motywu systemowego Windows:", e)
             return "Neutralny"
-
-    elif system == "Darwin":  # macOS
+    elif system == "Darwin":
         try:
             from subprocess import run
             result = run(["defaults", "read", "-g", "AppleInterfaceStyle"], capture_output=True, text=True)
@@ -747,7 +861,6 @@ def get_system_theme():
         except Exception as e:
             print("Błąd wczytywania motywu systemowego macOS:", e)
             return "Neutralny"
-
     elif system == "Linux":
         try:
             import subprocess
@@ -756,9 +869,7 @@ def get_system_theme():
         except Exception as e:
             print("Błąd wczytywania motywu systemowego Linux:", e)
             return "Neutralny"
-
-    return "Neutralny"  # Domyślnie
-
+    return "Neutralny"
 
 
 if __name__ == '__main__':
