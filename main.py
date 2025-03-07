@@ -434,6 +434,19 @@ class ECGEditor(QMainWindow):
         time_layout.addWidget(self.slider_time_window)
         layout.addLayout(time_layout)
 
+
+        scale_layout = QHBoxLayout()
+        self.label_scale = QLabel("Skalowanie amplitudy:")
+        scale_layout.addWidget(self.label_scale)
+        self.slider_scale = QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider_scale.setRange(10, 200)  # Skala 10% - 200%
+        self.slider_scale.setValue(100)  # Domyślnie 100% (czyli bez zmian)
+        self.slider_scale.valueChanged.connect(self.update_plot)
+        self.slider_scale.setEnabled(False)
+        scale_layout.addWidget(self.slider_scale)
+        layout.addLayout(scale_layout)
+
+
         scroll_layout = QHBoxLayout()
         self.label_scroll = QLabel("Przewijanie:")
         scroll_layout.addWidget(self.label_scroll)
@@ -442,6 +455,9 @@ class ECGEditor(QMainWindow):
         self.scroll_bar.setEnabled(False)
         scroll_layout.addWidget(self.scroll_bar)
         layout.addLayout(scroll_layout)
+
+
+
 
     def open_settings(self):
         dialog = SettingsDialog(self, self.current_settings, self.preset_dark, self.preset_light)
@@ -547,6 +563,7 @@ class ECGEditor(QMainWindow):
                 self.slider_time_window.setEnabled(True)
                 self.scroll_bar.setEnabled(True)
                 self.btn_load_atr.setEnabled(True)
+                self.slider_scale.setEnabled(True)
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", str(e))
 
@@ -667,6 +684,17 @@ class ECGEditor(QMainWindow):
         sig = self.record.p_signal[start:end, lead]
         t = np.arange(start, end) / fs
 
+
+        # Normalizacja do zakresu [-1, 1]
+        if len(sig) > 0:
+            sig_min, sig_max = sig.min(), sig.max()
+            if sig_max - sig_min > 0:  # Unikamy dzielenia przez zero
+                sig = 2 * (sig - sig_min) / (sig_max - sig_min) - 1
+
+            # Pobranie wartości suwaka i zastosowanie skalowania
+        scale_factor = self.slider_scale.value() / 100  # Przeliczenie na przedział [0.1, 2.0]
+        sig *= scale_factor
+
         ecg_line_color = self.current_settings.get("ecg_line_color", "#1E90FF")
         annotation_marker_color = self.current_settings.get("annotation_marker_color", "#FF4500")
         annotation_text_color = self.current_settings.get("annotation_text_color", "#FFFFFF")
@@ -676,6 +704,8 @@ class ECGEditor(QMainWindow):
         self.ax1.plot(t, sig, color=ecg_line_color)
         self.ax1.set_xlabel("Czas (s)", color=font_color)
         self.ax1.grid(True)
+        self.ax1.set_ylim(-1.25, 1.25)  # Nieco większy margines dla lepszej widoczności
+
 
         # Annotations on top plot
         if self.annotations is not None and len(self.annotations.sample):
@@ -812,7 +842,7 @@ class ECGEditor(QMainWindow):
         if event.inaxes == self.ax1:
             x0, x1 = self.ax1.get_xlim()
             width = x1 - x0
-            shift = width * 0.1 * (-event.step)
+            shift = width * 0.05 * (-event.step)
             new_x0 = x0 + shift
             new_x1 = x1 + shift
 
