@@ -458,6 +458,44 @@ class ECGEditor(QMainWindow):
 
 
 
+            # Nowy layout dla skoku do podanej sekundy
+        jump_layout = QHBoxLayout()
+        self.label_jump = QLabel("Skok do sekundy:")
+        jump_layout.addWidget(self.label_jump)
+        self.jump_line_edit = QLineEdit()
+        self.jump_line_edit.setPlaceholderText("Podaj sekundy")
+        self.jump_line_edit.returnPressed.connect(self.jump_to_time)
+        jump_layout.addWidget(self.jump_line_edit)
+        self.btn_jump = QPushButton("Przejdź")
+        self.btn_jump.clicked.connect(self.jump_to_time)
+        jump_layout.addWidget(self.btn_jump)
+        layout.addLayout(jump_layout)
+
+
+
+
+    @pyqtSlot()
+    def jump_to_time(self) -> None:
+        if self.record is None:
+            QMessageBox.warning(self, "Błąd", "Brak wczytanego sygnału!")
+            return
+        try:
+            target_sec = float(self.jump_line_edit.text())
+        except ValueError:
+            QMessageBox.warning(self, "Błąd", "Nieprawidłowa wartość czasu!")
+            return
+        fs = self.record.fs
+        total_samples = self.record.p_signal.shape[0]
+        win_samples = int(self.window_size_s * fs)
+        target_sample = int(round(target_sec * fs))
+        new_current_start = target_sample - win_samples // 2
+        if new_current_start < 0 or new_current_start + win_samples > total_samples:
+            QMessageBox.warning(self, "Błąd", "Podana sekunda poza zakresem sygnału!")
+            return
+        self.current_start = new_current_start
+        self.scroll_bar.setValue(self.current_start)
+        self.update_plot()
+
 
     def open_settings(self):
         dialog = SettingsDialog(self, self.current_settings, self.preset_dark, self.preset_light)
@@ -572,7 +610,9 @@ class ECGEditor(QMainWindow):
         if not self.record:
             QMessageBox.warning(self, "Błąd", "Najpierw wczytaj plik .dat!")
             return
-        file_path, _ = QFileDialog.getOpenFileName(self, "Wczytaj .atr/.ii", "", "Pliki ATR (*.atr *.ii)")
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Wczytaj .atr/.ii/.pu0/.pu1", "", "Pliki ATR (*.atr *.ii *.pu0 *.pu1)"
+        )
         if file_path:
             self.atr_original_path = file_path
             self.atr_file = file_path
@@ -596,9 +636,11 @@ class ECGEditor(QMainWindow):
             base = os.path.basename(self.atr_file)
             base = os.path.splitext(base)[0]
             sanitized_base = sanitize_record_name(base)
-            ext = os.path.splitext(self.atr_file)[1].lstrip('.') or 'atr'
+            allowed_ext = ['atr', 'ii', 'pu0', 'pu1']
+            ext = os.path.splitext(self.atr_file)[1].lstrip('.').lower()
+            if ext not in allowed_ext:
+                ext = 'atr'
             current_dir = os.getcwd()
-            # Sortowanie adnotacji – uporządkuj próbki oraz odpowiadające im symbole
             sort_idx = np.argsort(self.annotations.sample)
             sorted_samples = self.annotations.sample[sort_idx]
             sorted_symbols = np.array(self.annotations.symbol)[sort_idx]
@@ -616,7 +658,9 @@ class ECGEditor(QMainWindow):
             QMessageBox.warning(self, "Błąd", "Brak załadowanego pliku ATR.")
             return
         default_dir = os.path.dirname(self.atr_original_path) if self.atr_original_path else ""
-        file_path, _ = QFileDialog.getSaveFileName(self, "Zapisz .atr/.ii", default_dir, "Pliki ATR (*.atr *.ii)")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Zapisz .atr/.ii/.pu0/.pu1", default_dir, "Pliki ATR (*.atr *.ii *.pu0 *.pu1)"
+        )
         if file_path:
             out_dir = os.path.dirname(file_path)
             base = os.path.basename(file_path)
@@ -635,7 +679,6 @@ class ECGEditor(QMainWindow):
                 QMessageBox.critical(self, "Błąd", str(e))
             finally:
                 os.chdir(current_dir)
-
 
     def populate_leads(self) -> None:
         self.combo_leads.clear()
