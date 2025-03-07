@@ -388,6 +388,8 @@ class ECGEditor(QMainWindow):
         layout = QVBoxLayout(central)
         self.canvas = FigureCanvas(plt.Figure(figsize=(20, 10)))
         layout.addWidget(self.canvas)
+        # Podłącz zdarzenie scroll do figury:
+        self.canvas.mpl_connect('scroll_event', self.on_scroll)
         self.ax1, self.ax2 = self.canvas.figure.subplots(2, 1, sharex=True, gridspec_kw={'height_ratios': [4, 1]})
         self.ax1.set_xlabel("Czas (s)")
         self.ax2.set_xlabel("Czas (s)")
@@ -728,6 +730,7 @@ class ECGEditor(QMainWindow):
                     self.drag_annotation = artist
                     self.drag_index = idx
                     self.drag_offset = event.xdata - artist.get_position()[0]
+                    self.original_sample = self.annotations.sample[idx]  # Zapisz oryginalną wartość
                     return
 
         if event.inaxes == self.ax2 and event.button == 3:
@@ -756,6 +759,14 @@ class ECGEditor(QMainWindow):
         if event.inaxes == self.ax1 and event.button == 3:
             fs = self.record.fs
             sample_idx = int(round(event.xdata * fs))  # Przeliczenie współrzędnych na próbki
+            total_samples = self.record.p_signal.shape[0]
+            # Klampowanie, żeby nie wychodzić poza zakres
+            sample_idx = max(0, min(sample_idx, total_samples - 1))
+
+            # Sprawdź, czy próbka już istnieje
+            if sample_idx in self.annotations.sample:
+                QMessageBox.warning(self, "Błąd", f"Próbka {sample_idx} już istnieje! Nie można dodać nowej adnotacji.")
+                return  # Anuluj operację
 
             sym, ok = QInputDialog.getText(self, "Dodaj adnotację", "Symbol adnotacji:", text="A")
             if ok:
@@ -797,7 +808,34 @@ class ECGEditor(QMainWindow):
                 self.update_plot()
                 self.auto_save_atr()  # Zapisanie zmiany od razu
 
+    def on_scroll(self, event) -> None:
+        if event.inaxes == self.ax1:
+            x0, x1 = self.ax1.get_xlim()
+            width = x1 - x0
+            shift = width * 0.1 * (-event.step)
+            new_x0 = x0 + shift
+            new_x1 = x1 + shift
 
+            # Zapobiegaj przesuwaniu poza lewą granicę
+            if new_x0 < 0:
+                new_x0 = 0
+                new_x1 = width
+
+            # Zapobiegaj przesuwaniu poza prawą granicę, jeśli rekord jest wczytany
+            if self.record is not None:
+                tmax = self.record.p_signal.shape[0] / self.record.fs
+                if new_x1 > tmax:
+                    new_x1 = tmax
+                    new_x0 = tmax - width
+
+            new_xlim = (new_x0, new_x1)
+            self.ax1.set_xlim(new_xlim)
+            self.ax2.set_xlim(new_xlim)
+            if self.record is not None:
+                fs = self.record.fs
+                self.current_start = max(0, int(new_xlim[0] * fs))
+                self.scroll_bar.setValue(self.current_start)
+            self.canvas.draw_idle()
 
     @pyqtSlot(object)
     def on_motion(self, event: MouseEvent) -> None:
@@ -813,21 +851,24 @@ class ECGEditor(QMainWindow):
             fs = self.record.fs
             new_time = self.drag_annotation.get_position()[0]
             new_sample = int(round(new_time * fs))
-            if self.annotations is not None and self.drag_index is not None:
-                self.annotations.sample[self.drag_index] = new_sample
+            total_samples = self.record.p_signal.shape[0]
+            new_sample = max(0, min(new_sample, total_samples - 1))
 
+            # Sprawdź, czy nowa próbka już istnieje
+            if new_sample in self.annotations.sample:
+                QMessageBox.warning(self, "Błąd", f"Próbka {new_sample} już istnieje! Anulowano przesunięcie.")
+                self.annotations.sample[self.drag_index] = self.original_sample  # Przywróć poprzednią wartość
+            else:
+                self.annotations.sample[self.drag_index] = new_sample
                 sort_idx = np.argsort(self.annotations.sample)
                 self.annotations.sample = self.annotations.sample[sort_idx]
                 self.annotations.symbol = np.array(self.annotations.symbol)[sort_idx].tolist()
-
 
             self.drag_annotation = None
             self.drag_index = None
             self.update_plot()
             self.auto_save_atr()
             self.update_atr_info()
-
-
 
     @pyqtSlot(int)
     def edit_annotation(self, global_idx: int) -> None:
