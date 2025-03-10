@@ -1,10 +1,5 @@
-import sys
 import copy
-import os
 import re
-import numpy as np
-import wfdb
-from PyQt6 import  QtCore
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog, QVBoxLayout, QWidget,
     QLabel, QScrollBar, QHBoxLayout, QMessageBox, QComboBox,
@@ -15,8 +10,11 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseEvent
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt6 import QtWidgets, QtGui
 import platform
+import sys, os, wfdb
+import  numpy as np
+from PyQt6 import QtWidgets, QtGui, QtCore
+import pyqtgraph as pg
 
 
 
@@ -374,6 +372,9 @@ class ECGEditor(QMainWindow):
         menu_bar = self.menuBar()
         if sys.platform == "darwin":
             menu_bar.setNativeMenuBar(False)
+
+
+
         settings_menu = menu_bar.addMenu("Ustawienia")
         atr_info_menu = menu_bar.addMenu("Informacje")
         settings_action = QtGui.QAction("Styl interfejsu", self)
@@ -386,6 +387,7 @@ class ECGEditor(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
+
         self.canvas = FigureCanvas(plt.Figure(figsize=(20, 10)))
         layout.addWidget(self.canvas)
         # Podłącz zdarzenie scroll do figury:
@@ -456,9 +458,7 @@ class ECGEditor(QMainWindow):
         scroll_layout.addWidget(self.scroll_bar)
         layout.addLayout(scroll_layout)
 
-
-
-            # Nowy layout dla skoku do podanej sekundy
+        # Nowy layout dla skoku do podanej sekundy
         jump_layout = QHBoxLayout()
         self.label_jump = QLabel("Skok do sekundy:")
         jump_layout.addWidget(self.label_jump)
@@ -471,6 +471,8 @@ class ECGEditor(QMainWindow):
         jump_layout.addWidget(self.btn_jump)
         layout.addLayout(jump_layout)
 
+        self.btn_back = QtWidgets.QPushButton("Powrót")
+        layout.addWidget(self.btn_back)
 
 
 
@@ -636,9 +638,9 @@ class ECGEditor(QMainWindow):
             base = os.path.basename(self.atr_file)
             base = os.path.splitext(base)[0]
             sanitized_base = sanitize_record_name(base)
-            allowed_ext = ['atr', 'ii', 'pu0', 'pu1']
             ext = os.path.splitext(self.atr_file)[1].lstrip('.').lower()
-            if ext not in allowed_ext:
+            # Zmiana: jeśli rozszerzenie zawiera znaki inne niż litery, ustaw na 'atr'
+            if not ext.isalpha():
                 ext = 'atr'
             current_dir = os.getcwd()
             sort_idx = np.argsort(self.annotations.sample)
@@ -999,9 +1001,129 @@ def get_system_theme():
     return "Neutralny"
 
 
+
+
+
+
+class MainMenu(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Ustawienia stylu dla przycisków
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff9999, stop:1 #ff4d4d);
+                color: white;
+                border: 2px solid #ff6666;
+                border-radius: 10px;
+                padding: 10px;
+                font: bold 16px;
+            }
+            QPushButton:hover {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ffb3b3, stop:1 #ff6666);
+            }
+            QPushButton:pressed {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #ff4d4d, stop:1 #ff1a1a);
+            }
+        """)
+        layout = QtWidgets.QVBoxLayout(self)
+        # Utwórz ikonę serca z pliku heart.ico
+        heart_icon = QtGui.QIcon("heart.ico")
+        self.btn_view = QtWidgets.QPushButton("Oglądaj ECG")
+        self.btn_view.setIcon(heart_icon)
+        self.btn_view.setIconSize(QtCore.QSize(24, 24))
+        self.btn_edit = QtWidgets.QPushButton("Edytuj ECG")
+        self.btn_edit.setIcon(heart_icon)
+        self.btn_edit.setIconSize(QtCore.QSize(24, 24))
+        layout.addWidget(self.btn_view)
+        layout.addWidget(self.btn_edit)
+
+
+class ECGViewer(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.record = None
+        self.annotations = None
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Dodaj wykres (PlotWidget)
+        self.plot_widget = pg.PlotWidget()
+        layout.addWidget(self.plot_widget)
+
+        # Dodaj przycisk "Wczytaj .dat" poniżej wykresu
+        self.btn_load_dat = QtWidgets.QPushButton("Wczytaj .dat")
+        layout.addWidget(self.btn_load_dat)
+
+        # Dodaj przycisk "Powrót" pod spodem
+        self.btn_back = QtWidgets.QPushButton("Powrót")
+        layout.addWidget(self.btn_back)
+
+        # Połącz sygnał przycisku wczytywania z metodą load_dat
+        self.btn_load_dat.clicked.connect(self.load_dat)
+
+
+
+    def load_dat(self):
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Wczytaj .dat", "", "Pliki DAT (*.dat)")
+        if file_path:
+            self.dat_file = file_path[:-4]
+            try:
+                self.record = wfdb.rdrecord(self.dat_file)
+                self.plot_ecg()
+            except Exception as e:
+                QtWidgets.QMessageBox.critical(self, "Błąd", str(e))
+
+    def plot_ecg(self):
+        if self.record is None:
+            return
+        self.plot_widget.clear()
+        sig = self.record.p_signal[:, 0]
+        fs = self.record.fs
+        duration = len(sig) / fs
+        t = np.arange(len(sig)) / fs
+        self.plot_widget.plot(t, sig, pen=pg.mkPen(color='c'))
+
+        # Ograniczenie widoku, żeby nie wychodzić poza zakres sygnału:
+        vb = self.plot_widget.getViewBox()
+        vb.setLimits(xMin=0, xMax=duration, yMin=-100, yMax=100)
+
+        # Ustawienie początkowego zakresu (np. 10 sekund lub krótszy, jeśli sygnał krótszy)
+        view_duration = min(10, duration)
+        self.plot_widget.setXRange(0, view_duration)
+
+
+
+
+
+
+class MainWindow(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("ECG Application")
+        self.stack = QtWidgets.QStackedWidget()
+        self.setCentralWidget(self.stack)
+        self.main_menu = MainMenu()
+        self.ecg_viewer = ECGViewer()
+        self.ecg_editor = ECGEditor()
+        self.stack.addWidget(self.main_menu)
+        self.stack.addWidget(self.ecg_viewer)
+        self.stack.addWidget(self.ecg_editor)
+        self.main_menu.btn_view.clicked.connect(lambda: self.stack.setCurrentWidget(self.ecg_viewer))
+        self.main_menu.btn_edit.clicked.connect(lambda: self.stack.setCurrentWidget(self.ecg_editor))
+        self.ecg_viewer.btn_back.clicked.connect(lambda: self.stack.setCurrentWidget(self.main_menu))
+        self.ecg_editor.btn_back.clicked.connect(lambda: self.stack.setCurrentWidget(self.main_menu))
+
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     app.setWindowIcon(QtGui.QIcon("heart.ico"))  # Ikona aplikacji na pasku zadań
-    editor = ECGEditor()
-    editor.show()
+    window = MainWindow()
+    window.resize(800, 600)
+    window.show()
     sys.exit(app.exec())
